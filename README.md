@@ -202,7 +202,7 @@ sudo dnf remove claude-desktop
 
 ## Credits
 
-- [@bsneed](https://github.com/bsneed) (Brandon Sneed): the original [claude-desktop-fedora](https://github.com/bsneed/claude-desktop-fedora) project this one grew out of.
+- [@bsneed](https://github.com/bsneed) (Brandon Sneed): the original project this one grew out of.
 - [@sharpandpearl](https://github.com/sharpandpearl): `build-official.sh` and the analysis of why the Windows repack stopped working ([#4](https://github.com/dewzor/claude-desktop-fedora/pull/4)).
 - [@randy-johnson](https://github.com/randy-johnson): `titleBarOverlay` regex fix on the legacy script ([#3](https://github.com/dewzor/claude-desktop-fedora/pull/3)).
 - [@gordonmessmer](https://github.com/gordonmessmer): the [com.anthropic.Claude](https://github.com/gordonmessmer/com.anthropic.Claude) Flatpak manifest that the one in `flatpak/` is based on.
