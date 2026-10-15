@@ -1,5 +1,14 @@
 # Changelog
 
+## v9.1 (2026-10-16)
+
+**Faster RPM step.** Started by [@itsnitinr](https://github.com/itsnitinr) in [#5](https://github.com/dewzor/claude-desktop-fedora/pull/5).
+
+- The build looked stuck at "building RPM": Fedora's default zstd level 19 on one core took about 4 minutes on the ~530 MB payload. #5 made it multithreaded.
+- On top of #5 the payload now uses zstd level 3 on one core. The RPM is built on your machine and installed right away, so the smaller file wasn't worth the wait. Measured on Fedora 43, 44 and rawhide: about 20 seconds instead of about 4 minutes, under 0.7 GB of memory, and it also works on a 2 GB machine, where level 19 on all cores ran out of memory. The RPM is about 46 MB bigger; the installed files are identical.
+- `claude-desktop-update.service` now runs at the lowest CPU and I/O priority.
+- `claude-desktop-builder` 1.0.1 on COPR.
+
 ## v9 (2026-08-29)
 
 **Official Linux build.** New primary path, `build-official.sh`, contributed by [@sharpandpearl](https://github.com/sharpandpearl) in [#4](https://github.com/dewzor/claude-desktop-fedora/pull/4).

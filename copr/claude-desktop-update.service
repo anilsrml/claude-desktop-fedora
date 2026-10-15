@@ -9,3 +9,7 @@ Type=oneshot
 ExecStart=/usr/bin/claude-desktop-update
 Environment=TMPDIR=/var/tmp
 TimeoutStartSec=3600
+# Runs in the background while you work: lowest CPU and I/O priority.
+Nice=19
+CPUSchedulingPolicy=batch
+IOSchedulingClass=idle

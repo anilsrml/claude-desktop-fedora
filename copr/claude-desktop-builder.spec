@@ -1,5 +1,5 @@
 Name:           claude-desktop-builder
-Version:        1.0.0
+Version:        1.0.1
 Release:        1%{?dist}
 Summary:        Builds and updates Claude Desktop for Fedora from the official upstream build
 
@@ -82,5 +82,9 @@ fi
 %dir %{_sharedstatedir}/%{name}
 
 %changelog
+* Fri Oct 16 2026 Henrik Berglund <16418668+dewzor@users.noreply.github.com> - 1.0.1-1
+- Faster, lighter RPM payload compression (zstd level 3), from PR #5
+- Updater runs at the lowest CPU and I/O priority
+
 * Sat Aug 29 2026 Henrik Berglund <16418668+dewzor@users.noreply.github.com> - 1.0.0-1
 - First release: build script, updater CLI and daily systemd timer

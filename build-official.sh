@@ -250,12 +250,13 @@ rm -rf %{buildroot}%{_datadir}/lintian
 - Repackage Anthropic's official Linux $ARCH_RPM build $VERSION for Fedora
 SPEC
 
-info "building RPM (this takes a minute; the payload is ~530 MB)..."
-# Fedora's default payload compression is w19.zstdio: zstd level 19 on a
-# single thread, which takes many minutes on this payload. T0 keeps the
-# same level but uses every core.
+info "building RPM (~530 MB payload, usually under a minute; log: $WORK/rpmbuild.log)..."
+# Fedora's default payload compression is w19.zstdio: zstd level 19 on one
+# core, several minutes on this payload. This RPM is built on your machine
+# and installed right away, so a small file buys nothing. Level 3 on one
+# core takes seconds and little memory, even on small machines.
 rpmbuild --define "_topdir $RB" \
-    --define "_binary_payload w19T0.zstdio" \
+    --define "_binary_payload w3.zstdio" \
     -bb "$RB/SPECS/claude-desktop.spec" \
     > "$WORK/rpmbuild.log" 2>&1 \
     || { tail -30 "$WORK/rpmbuild.log" >&2; die "rpmbuild failed (full log: $WORK/rpmbuild.log)"; }
