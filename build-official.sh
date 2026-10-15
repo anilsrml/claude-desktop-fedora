@@ -251,7 +251,12 @@ rm -rf %{buildroot}%{_datadir}/lintian
 SPEC
 
 info "building RPM (this takes a minute; the payload is ~530 MB)..."
-rpmbuild --define "_topdir $RB" -bb "$RB/SPECS/claude-desktop.spec" \
+# Fedora's default payload compression is w19.zstdio: zstd level 19 on a
+# single thread, which takes many minutes on this payload. T0 keeps the
+# same level but uses every core.
+rpmbuild --define "_topdir $RB" \
+    --define "_binary_payload w19T0.zstdio" \
+    -bb "$RB/SPECS/claude-desktop.spec" \
     > "$WORK/rpmbuild.log" 2>&1 \
     || { tail -30 "$WORK/rpmbuild.log" >&2; die "rpmbuild failed (full log: $WORK/rpmbuild.log)"; }
 
