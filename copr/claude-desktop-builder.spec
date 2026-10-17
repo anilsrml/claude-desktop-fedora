@@ -1,5 +1,5 @@
 Name:           claude-desktop-builder
-Version:        1.0.1
+Version:        1.0.2
 Release:        1%{?dist}
 Summary:        Builds and updates Claude Desktop for Fedora from the official upstream build
 
@@ -84,6 +84,10 @@ fi
 %dir %{_sharedstatedir}/%{name}
 
 %changelog
+* Fri Oct 16 2026 arcanistzed <arcanistzed@gmail.com> - 1.0.2-1
+- Resolve and verify builds through Anthropic's signed apt repository
+- Package the GNOME search provider, MIME types and ccd launcher link
+
 * Fri Oct 16 2026 Henrik Berglund <16418668+dewzor@users.noreply.github.com> - 1.0.1-1
 - Faster, lighter RPM payload compression (zstd level 3), from PR #5
 - Updater runs at the lowest CPU and I/O priority
