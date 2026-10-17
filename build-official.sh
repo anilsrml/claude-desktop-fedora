@@ -146,6 +146,34 @@ info "native modules verified as Linux x86-64 (claude-native, node-pty)"
 DESKTOP_FILE="$(cd "$WORK/payload/usr/share/applications" && ls -1 *.desktop 2>/dev/null | head -1)"
 [ -n "$DESKTOP_FILE" ] || die "no .desktop file in the payload"
 
+# Upstream's postinst copies these out of resources/ at install time, only
+# because electron-installer-debian cannot stage extra files. Packaging them
+# directly lets rpm own and remove them. Each is optional so older payloads
+# still build.
+RES="usr/lib/claude-desktop/resources"
+EXTRA_FILES=""
+stage() {  # stage SRC-under-payload DEST-under-payload
+    [ -f "$WORK/payload/$1" ] || { warn "not in this build, skipping: $1"; return 0; }
+    install -Dm644 "$WORK/payload/$1" "$WORK/payload/$2"
+    EXTRA_FILES+="/$2"$'\n'
+}
+stage "$RES/linux-mime/com.anthropic.Claude.xml" \
+      usr/share/mime/packages/com.anthropic.Claude.xml
+stage "$RES/gnome-search-provider/com.anthropic.Claude.search-provider.ini" \
+      usr/share/gnome-shell/search-providers/com.anthropic.Claude.search-provider.ini
+stage "$RES/gnome-search-provider/com.anthropic.Claude.SearchProvider.service" \
+      usr/share/dbus-1/services/com.anthropic.Claude.SearchProvider.service
+# gnome-shell owns these directories on GNOME; claim them as well so they are
+# not left unowned on desktops without it.
+if [ -f "$WORK/payload/usr/share/gnome-shell/search-providers/com.anthropic.Claude.search-provider.ini" ]; then
+    EXTRA_FILES+="%dir /usr/share/gnome-shell"$'\n'"%dir /usr/share/gnome-shell/search-providers"$'\n'
+fi
+# The `ccd` launcher only ships in some builds; link it the way postinst does.
+if [ -x "$WORK/payload/$RES/bin/ccd" ] && [ ! -e "$WORK/payload/usr/bin/ccd" ]; then
+    ln -s ../lib/claude-desktop/resources/bin/ccd "$WORK/payload/usr/bin/ccd"
+    EXTRA_FILES+="/usr/bin/ccd"$'\n'
+fi
+
 # ------------------------------------------------------------ rpm build ------
 RB="$WORK/rpmbuild"
 mkdir -p "$RB"/{SOURCES,SPECS,BUILD,BUILDROOT,RPMS,SRPMS}
@@ -191,6 +219,13 @@ Recommends:     libappindicator-gtk3
 Recommends:     gnome-keyring
 Recommends:     alsa-lib
 Recommends:     ca-certificates
+# From upstream's Recommends: Claude Code / Cowork sandboxing, SSH remotes,
+# audio capture, and the GNOME search provider (run with gjs).
+Recommends:     bubblewrap
+Recommends:     socat
+Recommends:     openssh-clients
+Recommends:     pipewire-libs
+Recommends:     gjs
 # Cowork's optional full-VM sandbox; harmless to omit.
 Suggests:       qemu-system-x86
 Suggests:       edk2-ovmf
@@ -235,14 +270,16 @@ rm -rf %{buildroot}%{_datadir}/lintian
 %{_datadir}/applications/$DESKTOP_FILE
 %{_datadir}/icons/hicolor/*/apps/claude-desktop.png
 %{_datadir}/doc/claude-desktop
-
+$EXTRA_FILES
 %post
 /usr/bin/update-desktop-database %{_datadir}/applications &>/dev/null || :
+/usr/bin/update-mime-database %{_datadir}/mime &>/dev/null || :
 /usr/bin/touch --no-create %{_datadir}/icons/hicolor &>/dev/null || :
 /usr/bin/gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %postun
 /usr/bin/update-desktop-database %{_datadir}/applications &>/dev/null || :
+/usr/bin/update-mime-database %{_datadir}/mime &>/dev/null || :
 /usr/bin/gtk-update-icon-cache %{_datadir}/icons/hicolor &>/dev/null || :
 
 %changelog
