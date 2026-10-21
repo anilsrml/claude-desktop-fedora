@@ -19,6 +19,10 @@
 # Runs entirely as your own user; root is only needed to install the result.
 #
 set -euo pipefail
+# Bracket ranges such as [A-Za-z] follow the locale's collation. Under
+# tr_TR.UTF-8 they leave out i and I, so the Filename check below rejects
+# every valid path ("pool/main/..."). Pin the locale for consistent checks.
+export LC_ALL=C.UTF-8
 
 ARCH_DEB="amd64"
 ARCH_RPM="x86_64"
