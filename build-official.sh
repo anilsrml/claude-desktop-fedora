@@ -70,6 +70,7 @@ OUTDIR="$PWD/build/official"
 KEEP=0
 RELEASE="1"
 PRINT_LATEST=0
+EXPECT_SHA256=""
 
 die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 info() { printf '\033[36m==>\033[0m %s\n' "$*"; }
@@ -85,6 +86,9 @@ Usage: $0 [options]
   --keep         Keep the build tree for inspection.
   --print-latest Verify the signed index, print "VERSION SHA256 FILENAME" for
                  the newest build, and exit without downloading it.
+  --expect-sha256 SHA
+                 Build only if the newest signed entry has this SHA256; stop
+                 if the index changed since it was checked.
   -h, --help     Show this help.
 
 With no options: fetch the newest official Linux build from Anthropic's signed
@@ -100,6 +104,7 @@ while [ $# -gt 0 ]; do
         --release) RELEASE="${2:?--release needs a value}"; shift 2 ;;
         --keep)    KEEP=1; shift ;;
         --print-latest) PRINT_LATEST=1; shift ;;
+        --expect-sha256) EXPECT_SHA256="${2:?--expect-sha256 needs a value}"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *)         die "unknown option: $1 (try --help)" ;;
     esac
@@ -150,9 +155,27 @@ resolve_latest() {
     status="$(gpg --homedir "$gnupg" --batch --status-fd 1 \
                   --output "$WORK/Release" --decrypt "$WORK/InRelease" 2>/dev/null)" \
         || die "InRelease signature check failed"
-    # VALIDSIG's last field is the fingerprint of the signing primary key.
-    printf '%s\n' "$status" | awk -v f="$KEY_FPR" '$2 == "VALIDSIG" && $NF == f { ok = 1 } END { exit !ok }' \
-        || die "InRelease is not signed by Anthropic's release key $KEY_FPR"
+    # gpg exits 0 for a mathematically valid signature even when the key has
+    # expired or been revoked, so read the status lines. Any bad, expired,
+    # revoked or unverifiable signature fails the check. One signature (one
+    # NEWSIG group) must be GOODSIG with a VALIDSIG whose last field, the
+    # signing primary key, is the pinned fingerprint.
+    local verdict=0
+    printf '%s\n' "$status" | awk -v f="$KEY_FPR" '
+        $2 == "NEWSIG" { g++ }
+        $2 ~ /^(BADSIG|ERRSIG|EXPSIG|EXPKEYSIG|REVKEYSIG)$/ { bad = 1 }
+        $2 == "GOODSIG" { good[g] = 1 }
+        $2 == "VALIDSIG" && $NF == f { pinned[g] = 1 }
+        END {
+            if (bad) exit 2
+            for (i in good) if (pinned[i]) exit 0
+            exit 1
+        }' || verdict=$?
+    case "$verdict" in
+        0) ;;
+        2) die "InRelease carries a bad, expired or revoked signature; refusing it" ;;
+        *) die "InRelease is not signed by Anthropic's release key $KEY_FPR" ;;
+    esac
 
     valid_until="$(sed -n 's/^Valid-Until: //p' "$WORK/Release")"
     [ -n "$valid_until" ] || die "the signed index carries no Valid-Until date"
@@ -167,26 +190,46 @@ resolve_latest() {
     [ "$(sha256_of "$WORK/Packages")" = "$want" ] \
         || die "$index does not match the checksum in the signed index"
 
-    # The index lists every published version; keep the newest.
-    entry="$(awk -v RS= '{
-            p = v = f = s = z = ""
+    # The index lists every published version. Check every claude-desktop
+    # stanza's raw fields first (exactly one of each, expected architecture,
+    # supported shapes); any malformed candidate stops the run instead of
+    # being skipped. Then keep the newest.
+    local parsed
+    parsed="$(awk -v RS= -v arch="$ARCH_DEB" '
+        {
+            delete c; delete val
             n = split($0, l, "\n")
             for (i = 1; i <= n; i++) {
-                if (l[i] ~ /^Package: /)  p = substr(l[i], 10)
-                if (l[i] ~ /^Version: /)  v = substr(l[i], 10)
-                if (l[i] ~ /^Filename: /) f = substr(l[i], 11)
-                if (l[i] ~ /^SHA256: /)   s = substr(l[i], 9)
-                if (l[i] ~ /^Size: /)     z = substr(l[i], 7)
+                if (l[i] !~ /^[A-Za-z0-9-]+: /) continue
+                k = l[i]; sub(/: .*/, "", k)
+                c[k]++; val[k] = substr(l[i], length(k) + 3)
             }
-            if (p == "claude-desktop" && v != "" && f != "" && s != "") print v, s, f, z
-        }' "$WORK/Packages" | sort -V -k1,1 | tail -1)"
+            if (val["Package"] != "claude-desktop") next
+            why = ""
+            if (c["Package"] != 1 || c["Version"] != 1 || c["Filename"] != 1 || c["SHA256"] != 1 || c["Architecture"] != 1 || c["Size"] > 1)
+                why = "missing or repeated field"
+            else if (val["Architecture"] != arch) why = "Architecture " val["Architecture"]
+            else if (val["Version"] !~ /^[0-9][0-9A-Za-z.+~]*$/) why = "Version " val["Version"]
+            else if (length(val["SHA256"]) != 64 || val["SHA256"] ~ /[^0-9a-f]/) why = "SHA256 " val["SHA256"]
+            else if (val["Filename"] !~ /^pool\/[A-Za-z0-9._+~\/-]+\.deb$/ || index(val["Filename"], "..")) why = "Filename " val["Filename"]
+            else if (c["Size"] && val["Size"] !~ /^[0-9]+$/) why = "Size " val["Size"]
+            if (why != "") { print "BAD\t" val["Version"] ": " why; bad = 1; next }
+            print val["Version"] "\t" val["SHA256"] "\t" val["Filename"] "\t" val["Size"]
+        }
+        END { exit bad }' "$WORK/Packages")" \
+        || die "malformed claude-desktop entry in the signed index: $(printf '%s\n' "$parsed" | awk -F'\t' '$1 == "BAD" { print $2; exit }')"
+    entry="$(printf '%s\n' "$parsed" | sort -t $'\t' -V -k1,1 | tail -1)"
     [ -n "$entry" ] || die "no claude-desktop entry in the signed Packages index"
-    read -r LATEST_VERSION LATEST_SHA256 LATEST_FILENAME LATEST_SIZE <<<"$entry"
-    case "$LATEST_FILENAME" in
-        pool/*.deb) ;;
-        *) die "unexpected Filename in the signed index: $LATEST_FILENAME" ;;
-    esac
-    case "$LATEST_FILENAME" in *..*) die "unexpected Filename in the signed index: $LATEST_FILENAME" ;; esac
+    IFS=$'\t' read -r LATEST_VERSION LATEST_SHA256 LATEST_FILENAME LATEST_SIZE <<<"$entry"
+    # The fields are signed, but they are still data: accept only the shapes
+    # this repository uses and never let one reach arithmetic or a URL glob.
+    [[ "$LATEST_VERSION" =~ ^[0-9][0-9A-Za-z.+~]*$ ]] \
+        || die "unsupported Version in the signed index: $LATEST_VERSION"
+    [[ "$LATEST_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+        || die "malformed SHA256 in the signed index: $LATEST_SHA256"
+    [[ "$LATEST_FILENAME" =~ ^pool/[A-Za-z0-9._+~/-]+\.deb$ && "$LATEST_FILENAME" != *..* ]] \
+        || die "unexpected Filename in the signed index: $LATEST_FILENAME"
+    [[ "${LATEST_SIZE:-}" =~ ^[0-9]{1,12}$ ]] || LATEST_SIZE=0
 }
 
 if [ "$PRINT_LATEST" -eq 1 ]; then
@@ -199,14 +242,18 @@ fi
 EXPECT_VERSION=""
 if [ -n "$DEB" ]; then
     [ -f "$DEB" ] || die "no such file: $DEB"
+    [ -z "$EXPECT_SHA256" ] || die "--expect-sha256 cannot be combined with --deb"
     warn "using local package $DEB without checking it against the signed index"
     cp -- "$DEB" "$WORK/claude.deb"
 else
     info "checking Anthropic's signed apt repository..."
     resolve_latest
+    if [ -n "$EXPECT_SHA256" ] && [ "$EXPECT_SHA256" != "$LATEST_SHA256" ]; then
+        die "the signed index changed since it was checked (expected $EXPECT_SHA256, now $LATEST_SHA256); run again"
+    fi
     info "found: claude-desktop $LATEST_VERSION (signature and index checksum verified)"
-    info "downloading (~$(( ${LATEST_SIZE:-0} / 1048576 )) MB)..."
-    curl -fSL --progress-bar --max-time 900 -o "$WORK/claude.deb" "$APT_BASE/$LATEST_FILENAME" \
+    info "downloading (~$(( 10#${LATEST_SIZE:-0} / 1048576 )) MB)..."
+    curl -fSL --globoff --progress-bar --max-time 900 -o "$WORK/claude.deb" "$APT_BASE/$LATEST_FILENAME" \
         || die "download failed"
     [ "$(sha256_of "$WORK/claude.deb")" = "$LATEST_SHA256" ] \
         || die "the downloaded .deb does not match the SHA256 in the signed index"
@@ -282,7 +329,10 @@ if [ -f "$WORK/payload/usr/share/gnome-shell/search-providers/com.anthropic.Clau
     EXTRA_FILES+="%dir /usr/share/gnome-shell"$'\n'"%dir /usr/share/gnome-shell/search-providers"$'\n'
 fi
 # The `ccd` launcher only ships in some builds; link it the way postinst does.
-if [ -x "$WORK/payload/$RES/bin/ccd" ] && [ ! -e "$WORK/payload/usr/bin/ccd" ]; then
+# If a later payload ships /usr/bin/ccd itself, package that instead.
+if [ -e "$WORK/payload/usr/bin/ccd" ] || [ -L "$WORK/payload/usr/bin/ccd" ]; then
+    EXTRA_FILES+="/usr/bin/ccd"$'\n'
+elif [ -x "$WORK/payload/$RES/bin/ccd" ]; then
     ln -s ../lib/claude-desktop/resources/bin/ccd "$WORK/payload/usr/bin/ccd"
     EXTRA_FILES+="/usr/bin/ccd"$'\n'
 fi

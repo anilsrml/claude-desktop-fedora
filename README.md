@@ -30,7 +30,7 @@ sudo dnf install claude-desktop-builder
 
 `claude-desktop-builder` is a small MIT-licensed package. It does not contain Claude Desktop, and it never will. Claude Desktop is proprietary, so no repository is allowed to ship it. What the package ships is the build itself: `build-official.sh`, a `claude-desktop-update` command, and a systemd timer.
 
-The timer runs once a day. It asks Anthropic's signed apt index which Linux build is current, and checks the signature against Anthropic's release key. If that build is already installed, it stops there and downloads nothing. If a newer build has shipped, it fetches Anthropic's own `.deb` on your machine, repackages the payload as an RPM, and installs it with `dnf`. You get exactly the package `build-official.sh` produces by hand, without having to remember to run it.
+The timer runs once a day. It asks Anthropic's signed apt index which Linux build is current, and checks the signature against Anthropic's release key. If that build is already installed and was built here from that exact signed `.deb`, it stops there and doesn't download the app. If a newer build has shipped, it fetches Anthropic's own `.deb` on your machine, repackages the payload as an RPM, and installs it with `dnf`. You get exactly the package `build-official.sh` produces by hand, without having to remember to run it.
 
 Run it yourself any time:
 
@@ -74,7 +74,7 @@ Anthropic publishes an official Linux build of Claude Desktop, but only as a `.d
 
 `build-official.sh`:
 
-1. Fetches the `InRelease` index of Anthropic's apt repository and checks its signature against Anthropic's release key. The script pins the key by fingerprint, `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE`, the one in the Claude Code setup docs. It refuses an index past its `Valid-Until` date, so nobody can replay an old one
+1. Fetches the `InRelease` index of Anthropic's apt repository and checks its signature against Anthropic's release key. The script pins the key by fingerprint, `31DD DE24 DDFA B679 F42D 7BD2 BAA9 29FF 1A7E CACE`, the one in the Claude Code setup docs. It refuses an index past its `Valid-Until` date, so an old index can't be replayed once it expires (as long as the system clock is right)
 2. Checks the `Packages` index against the SHA256 in the signed index and picks the newest `claude-desktop` entry
 3. Downloads that `.deb`, about 175 MB, and checks it against the SHA256 in the signed index
 4. Unpacks it and checks that the control file's version matches the signed index
@@ -158,7 +158,10 @@ Claude Code's terminal needs `node-pty`'s `prebuilds/linux-x64/pty.node`. Window
 The legacy script's titlebar `sed` no longer matches current releases. It's harmless but it's also a sign you're on the wrong path. The official build already draws a correct native frame. Use `build-official.sh`.
 
 ### `InRelease is not signed by Anthropic's release key` / `signature check failed`
-The apt index didn't verify against the pinned key. Don't work around this with `--deb`. Check https://code.claude.com/docs/en/desktop-linux and the key at https://downloads.claude.ai/claude-desktop/key.asc for a key change, and open an issue.
+The apt index didn't verify against the pinned key, or it was signed with an expired or revoked key. Don't work around this with `--deb`. Check https://code.claude.com/docs/en/desktop-linux and the key at https://downloads.claude.ai/claude-desktop/key.asc for a key change, and open an issue.
+
+### The daily update stopped working
+Run `journalctl -u claude-desktop-update.service` to see the last error. Every check fails closed: nothing is installed and the old version keeps working until the next run succeeds.
 
 ### `the signed index expired`
 The index is past its `Valid-Until` date, which Anthropic sets a week after signing it. Either the repository hasn't been re-signed in that time, or your system clock is wrong. Check the clock first.

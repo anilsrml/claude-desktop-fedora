@@ -87,6 +87,8 @@ fi
 * Fri Oct 16 2026 arcanistzed <arcanistzed@gmail.com> - 1.0.2-1
 - Resolve and verify builds through Anthropic's signed apt repository
 - Package the GNOME search provider, MIME types and ccd launcher link
+- Refuse expired or revoked signing keys; build exactly the checked entry;
+  rebuild once after upgrade; real reinstall for --force (maintainer)
 
 * Fri Oct 16 2026 Henrik Berglund <16418668+dewzor@users.noreply.github.com> - 1.0.1-1
 - Faster, lighter RPM payload compression (zstd level 3), from PR #5

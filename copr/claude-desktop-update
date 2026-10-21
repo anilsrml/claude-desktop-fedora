@@ -79,19 +79,15 @@ if [ -r "$STATE_FILE" ]; then
     last_id="$(head -1 "$STATE_FILE" 2>/dev/null || true)"
 fi
 
-# Up to date means: the app is installed, and either we built this exact
-# upstream file before, or the installed version already matches the version
-# upstream is serving. The second case covers a first run on a machine where
-# Claude Desktop was built by hand.
+# Up to date means: the installed version is the one upstream serves, and the
+# last verified build recorded here is that exact upstream .deb. Anything else
+# gets a verified rebuild, including the first run after upgrading from a
+# builder that recorded no SHA256 (that one rebuild also adds files the older
+# builder did not package) and a same-version upstream re-release.
 up_to_date=0
-adopt=0
-if [ "$installed" -eq 1 ]; then
-    if [ -n "$last_id" ] && [ "$last_id" = "$upstream_id" ]; then
-        up_to_date=1
-    elif [ -n "$upstream_version" ] && [ "$installed_version" = "$upstream_version" ]; then
-        up_to_date=1
-        adopt=1
-    fi
+if [ "$installed" -eq 1 ] && [ "$installed_version" = "$upstream_version" ] \
+   && [ "$last_id" = "$upstream_id" ]; then
+    up_to_date=1
 fi
 [ "$FORCE" -eq 1 ] && up_to_date=0
 
@@ -104,7 +100,9 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
         log "up to date: claude-desktop $installed_version is the current upstream build"
         exit 0
     fi
-    if [ "$installed" -eq 1 ]; then
+    if [ "$installed" -eq 1 ] && [ "$installed_version" = "$upstream_version" ]; then
+        log "rebuild due: $installed_version has no verified build record for upstream $(describe_upstream)"
+    elif [ "$installed" -eq 1 ]; then
         log "update available: installed $installed_version, upstream $(describe_upstream)"
     else
         log "update available: claude-desktop is not installed, upstream $(describe_upstream)"
@@ -113,16 +111,14 @@ if [ "$CHECK_ONLY" -eq 1 ]; then
 fi
 
 if [ "$up_to_date" -eq 1 ]; then
-    if [ "$adopt" -eq 1 ]; then
-        mkdir -p "$STATE_DIR"
-        printf '%s\n' "$upstream_id" > "$STATE_FILE"
-    fi
     log "up to date: claude-desktop $installed_version is the current upstream build"
     exit 0
 fi
 
 # --------------------------------------------------------------- build -------
-if [ "$installed" -eq 1 ]; then
+if [ "$installed" -eq 1 ] && [ "$installed_version" = "$upstream_version" ]; then
+    log "verified rebuild of $installed_version from upstream $(describe_upstream)"
+elif [ "$installed" -eq 1 ]; then
     log "upstream build changed: installed $installed_version, upstream $(describe_upstream)"
 else
     log "claude-desktop is not installed; building upstream $(describe_upstream)"
@@ -136,15 +132,26 @@ cleanup() { rm -rf "$OUT_DIR"; }
 trap cleanup EXIT
 
 log "building (this downloads around 165 MB and takes a few minutes)"
-"$BUILDER" --outdir "$OUT_DIR" || die "build-official.sh failed"
+# Build exactly the entry checked above; if the index moved meanwhile the
+# builder stops and the next run picks up the new one.
+"$BUILDER" --outdir "$OUT_DIR" --expect-sha256 "$upstream_sha256" || die "build-official.sh failed"
 
 rpm_file="$(find "$OUT_DIR" -maxdepth 1 -type f -name 'claude-desktop-*.rpm' -print -quit)"
 [ -n "$rpm_file" ] || die "the build reported success but produced no RPM"
 
 log "installing $(basename "$rpm_file")"
-# Obsoletes in the built package means dnf replaces the old one in place.
-dnf install -y "$rpm_file" || die "dnf could not install $rpm_file"
+nevra="$(rpm -qp --qf '%{NAME}-%{VERSION}-%{RELEASE}.%{ARCH}' "$rpm_file")"
+if rpm -q "$nevra" >/dev/null 2>&1; then
+    # Same name, version and release already installed: dnf install would be
+    # a no-op, so replace the files explicitly.
+    dnf reinstall -y "$rpm_file" || die "dnf could not reinstall $rpm_file"
+else
+    # Obsoletes in the built package means dnf replaces the old one in place.
+    dnf install -y "$rpm_file" || die "dnf could not install $rpm_file"
+fi
+rpm -q "$nevra" >/dev/null 2>&1 || die "$nevra is not installed after dnf finished"
 
-printf '%s\n' "$upstream_id" > "$STATE_FILE"
+printf '%s\n' "$upstream_id" > "$STATE_FILE.new" || die "could not write the build record $STATE_FILE.new"
+mv -f "$STATE_FILE.new" "$STATE_FILE" || die "could not commit the build record $STATE_FILE"
 new_version="$(rpm -q --qf '%{VERSION}' claude-desktop 2>/dev/null || echo unknown)"
 log "claude-desktop $new_version installed"
